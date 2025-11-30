@@ -10,91 +10,127 @@ entity mseq is
         reset   : in  std_logic;
         z       : in  std_logic;
         code    : out std_logic_vector(35 downto 0);
+		  debug_reg : out std_logic_vector(5 downto 0);
         mOPs    : out std_logic_vector(26 downto 0)
+		  
     );
 end mseq;
 
 architecture arc of mseq is
 
-    signal micro_addr : std_logic_vector(5 downto 0);   -- διεύθυνση microinstruction
-    signal rom_out    : std_logic_vector(35 downto 0);  -- microinstruction (36 bits)
-    signal next_addr  : std_logic_vector(5 downto 0);   -- επόμενη διεύθυνση
-    signal inc_addr   : std_logic_vector(5 downto 0);   -- έξοδος incrementer
-    signal cond_out   : std_logic;                      -- έξοδος από COND logic
-    signal sel        : std_logic_vector(2 downto 0);   -- πεδίο SEL (3 bits)
-    signal addr_field : std_logic_vector(5 downto 0);   -- πεδίο ADDR (6 bits)
+    -- Σήματα Δεδομένων
+    signal register_out : std_logic_vector(5 downto 0); 
+    signal rom_out      : std_logic_vector(35 downto 0);
+    signal mux3to1_out  : std_logic_vector(5 downto 0); 
+    
+    -- Inputs του Κεντρικού MUX
+    signal incrm_out    : std_logic_vector(5 downto 0); 
+    signal branch_addr  : std_logic_vector(5 downto 0);
+    signal map_addr     : std_logic_vector(5 downto 0);
+    
+    -- Σήματα Ελέγχου
+    -- ΑΛΛΑΓΗ 1: Δηλώνουμε το sel ως 3 bits (όχι main_mux_sel)
+    signal sel          : std_logic_vector(2 downto 0); 
+    signal cond_select  : std_logic_vector(1 downto 0); 
+    
+    -- Σήμα αποτελέσματος συνθήκης
+    signal mux4_out     : std_logic;                    
 
 begin
 
-    rom_seg : mseq_rom
+    -- 1. Αναθέσεις Εξόδων & ROM
+    code <= rom_out;
+    mOPs <= rom_out(32 downto 6);
+    branch_addr <= rom_out(5 downto 0);
+	 debug_reg <= register_out;
+
+    -- ΑΛΛΑΓΗ 2: Συνδέουμε το sel κατευθείαν με τη ROM
+    sel <= rom_out(35 downto 33);
+    
+    -- Τα 2 πρώτα bits του SEL πάνε και στον MUX4 (όπως στο διάγραμμα)
+    cond_select <= rom_out(35 downto 34);
+
+    -- 3. Υπολογισμός Inputs
+    incrm_out <= register_out + 1; -- Input 0
+    map_addr  <= ir & "00";        -- Input 2
+
+    -- 4. Μνήμη ROM
+    ROM : mseq_rom
         port map(
-            address => micro_addr,
+            address => register_out,
             clock   => clock,
             q       => rom_out
         );
 
-    code <= rom_out;                 -- ολόκληρη μικροεντολή
-    mOPs <= rom_out(26 downto 0);    -- 27-bit πεδίο μικροδιεργασιών
-
-    
-    addr_field <= rom_out(35 downto 30);  -- πάνω 6 bits
-    sel        <= rom_out(29 downto 27);  -- τα 3 bits SEL
-
-    cond_seg : mux4
+    -- 5. MUX Συνθήκης (MUX4TO1)
+    MUX4TO1 : mux4
         port map(
-            input1 => '0',
-            input2 => '1',
-            input3 => z,
-            input4 => not z,
-            sel    => ir(1 downto 0),
-            output => cond_out
+            input1 => '1',
+            input2 => z,
+            input3 => not z,
+            input4 => '0',
+            sel    => cond_select, 
+            output => mux4_out
         );
 
-    inc_seg : adder8bit
-        generic map(NUM_BITS => 6)
-        port map(
-            a    => micro_addr,
-            b    => "000001",
-            cin  => '0',
-            s    => inc_addr,
-            cout => open
-        );
+    -- ΑΛΛΑΓΗ 3: Αφαιρέσαμε το main_mux_sel <= bt_bit & mux4_out; 
+    -- Δεν χρειάζεται γιατί ελέγχουμε απευθείας το 'sel' των 3 bits.
 
-    process(sel, cond_out, addr_field, inc_addr)
+    -- 7. Κύριος MUX (Process)
+    -- ΑΛΛΑΓΗ 4: Στο process βάζουμε το 'sel' (3 bits)
+    process(sel, mux4_out, branch_addr, incrm_out, map_addr)
     begin
+        -- ΑΛΛΑΓΗ 5: Το case κοιτάει το 'sel'
         case sel is
+            
+            -- "000": Increment 
+            -- (FETCH1, FETCH2)
+            when "000" =>                 
+                mux3to1_out <= incrm_out;
 
-            when "000" =>    -- +1
-                next_addr <= inc_addr;
+            -- "001": MAP (Βάσει του .mif αρχείου σου)
+            -- (FETCH3 -> Πάει στην αρχή της εντολής)
+            when "001" =>                 
+                mux3to1_out <= map_addr;
 
-            when "001" =>    -- άμεσο jump
-                next_addr <= addr_field;
+            -- "110": Unconditional Jump (Βάσει του .mif αρχείου σου)
+            -- (NOP -> Πάει στο 1)
+            when "110" =>                 
+                mux3to1_out <= branch_addr;
 
-            when "010" =>    -- conditional jump
-                if cond_out = '1' then
-                    next_addr <= addr_field;
+            -- "010": Conditional Branch (π.χ. JMPZ - Αν Z=1 Jump)
+            when "010" =>
+                if mux4_out = '1' then
+                    mux3to1_out <= branch_addr;
                 else
-                    next_addr <= inc_addr;
+                    mux3to1_out <= incrm_out;
+                end if;
+            
+            -- "100": Conditional Branch (π.χ. JPNZ - Αν Z=0 Jump)
+            when "100" =>
+                if mux4_out = '1' then
+                    mux3to1_out <= branch_addr;
+                else
+                    mux3to1_out <= incrm_out;
                 end if;
 
-            when "011" =>    -- reset/ή ειδικό
-                next_addr <= (others => '0');
-
-            when others =>   -- reserved
-                next_addr <= (others => '0');
+            -- Default για ασφάλεια
+            when others =>
+                mux3to1_out <= (others => '0');
 
         end case;
     end process;
 
-    regn_seg : regnbit
+    -- 8. Καταχωρητής
+    REGISTER_PART : regnbit
         generic map(n => 6)
         port map(
-            din  => next_addr,
+            din  => mux3to1_out,
             clk  => clock,
             rst  => reset,
-            ld   => '1',      -- μικροδιεύθυνση φορτώνεται κάθε κύκλο
-            inc  => '0',      -- δεν χρησιμοποιούμε inc εδώ
-            dout => micro_addr
+            ld   => '1',
+            inc  => '0',
+            dout => register_out
         );
 
 end arc;

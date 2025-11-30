@@ -19,6 +19,13 @@ PORT (a, b: IN STD_LOGIC_VECTOR(NUM_BITS-1 DOWNTO 0);
       cout: OUT STD_LOGIC);
   END COMPONENT;
 
+ COMPONENT adder1bit 
+PORT (a, b: IN STD_LOGIC;
+     cin: IN STD_LOGIC;
+     s: OUT STD_LOGIC;
+     cout: OUT STD_LOGIC);
+  END COMPONENT;
+
   COMPONENT mux4
 PORT (input1, input2, input3, input4: IN STD_LOGIC ;
 sel: IN STD_LOGIC_VECTOR(1 DOWNTO 0) ;
