@@ -1,0 +1,206 @@
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+USE ieee.std_logic_unsigned.all;
+USE work.hardwiredlib.all; 
+
+ENTITY hardwired is
+    port( 
+        ir      : IN  STD_LOGIC_VECTOR(3 DOWNTO 0);
+        clock,reset   : IN  STD_LOGIC;
+        z       : IN  STD_LOGIC;
+        mOPs    : OUT STD_LOGIC_VECTOR(26 DOWNTO 0)
+    );
+END hardwired;
+
+ARCHITECTURE arc OF hardwired IS
+
+--τα σήματα είναι από τα σχήματα/block του σχηματικού με κατάληξη out
+    signal instruction_decdr_out : std_logic_vector(15 downto 0); 
+    signal time_counter_out : std_logic_vector(2 downto 0);  
+    signal state_decdr_out : std_logic_vector(7 downto 0);  
+    signal reset_out : std_logic;
+    signal clear_cntr_out : std_logic;
+
+    --σηματα για τα states,γινονται με την AND/^
+    signal FETCH1, FETCH2, FETCH3 : std_logic;
+    signal NOP1 : std_logic;
+    signal LDAC1, LDAC2, LDAC3, LDAC4, LDAC5 : std_logic;
+    signal STAC1, STAC2, STAC3, STAC4, STAC5 : std_logic;
+    signal MVAC1, MOVR1 : std_logic;
+    signal JUMP1, JUMP2, JUMP3 : std_logic;
+    signal JMPZY1, JMPZY2, JMPZY3 : std_logic; 
+    signal JMPZN1, JMPZN2 : std_logic;         
+    signal JPNZY1, JPNZY2, JPNZY3 : std_logic; 
+    signal JPNZN1, JPNZN2 : std_logic;         
+    signal ADD1, SUB1, INAC1, CLAC1 : std_logic;
+    signal AND1, OR1, XOR1, NOT1 : std_logic;
+
+    -- σηματα για control με χρηση OR/πανε στην εξοδο mOPs,συγκεκριμενα σηματα εχουν sig_ γιατι ειναι taken η ονομασιες απο το συστημα
+    signal ARLOAD, ARINC, PCLOAD, PCINC, DRLOAD : std_logic;
+    signal TRLOAD, IRLOAD, RLOAD, ACLOAD, ZLOAD : std_logic;
+    signal sig_READ, sig_WRITE, MEMBUS, BUSMEM, PCBUS : std_logic;
+    signal DRBUS, TRBUS, RBUS, ACBUS : std_logic;
+    signal ANDOP, OROP, XOROP, NOTOP : std_logic;
+    signal ACINC, ACZERO, PLUS, MINUS : std_logic;
+
+BEGIN
+    --reset του μετρητη, 0 για reset press η να τελειωσει η εντολη clear_cntr_out
+    reset_counter_sig <= reset OR clear_cntr_out;
+	
+    INSTRUCTION_DECODER: decdr4to16
+        port map ( 
+            Din  => ir, 
+            Dout => instruction_decdr_out 
+        );
+
+    -- Συνδέουμε τον Counter
+    TIME_COUNTER: counter_3bit
+        port map ( 
+            clk    => clock,
+            rst    => reset_counter_sig,
+            inc    => '1', -- με 1 μετρα συνεχεια
+            output => time_counter_out 
+        );
+
+    -- Συνδέουμε τον State Decoder
+    STATE_DECODER: decdr3to8
+        port map ( 
+            Din  => time_counter_out , 
+            Dout => state_decdr_out -- Εδώ βγαίνουν τα T0, T1, T2...
+        );
+
+    --δημιουργια και αντιστοιχηση του Πινακα 1  
+    FETCH1 <= state_decdr_out (0); -- T0
+    FETCH2 <= state_decdr_out (1); -- T1
+    FETCH3 <= state_decdr_out (2); -- T2
+
+    -- NOP
+    NOP1   <= instruction_decdr_out(0) AND state_decdr_out (3);
+
+    --LDAC
+    LDAC1  <= instruction_decdr_out(1) AND state_decdr_out (3);
+    LDAC2  <= instruction_decdr_out(1) AND state_decdr_out (4);
+    LDAC3  <= instruction_decdr_out(1) AND state_decdr_out (5);
+    LDAC4  <= instruction_decdr_out(1) AND state_decdr_out (6);
+    LDAC5  <= instruction_decdr_out(1) AND state_decdr_out (7);
+
+    --STAC
+    STAC1  <= instruction_decdr_out(2) AND state_decdr_out (3);
+    STAC2  <= instruction_decdr_out(2) AND state_decdr_out (4);
+    STAC3  <= instruction_decdr_out(2) AND state_decdr_out (5);
+    STAC4  <= instruction_decdr_out(2) AND state_decdr_out (6);
+    STAC5  <= instruction_decdr_out(2) AND state_decdr_out (7);
+
+    --MVAC, MOVR
+    MVAC1  <= instruction_decdr_out(3) AND state_decdr_out (3);
+    MOVR1  <= instruction_decdr_out(4) AND state_decdr_out (3);
+
+    --JUMP
+    JUMP1  <= instruction_decdr_out(5) AND state_decdr_out (3);
+    JUMP2  <= instruction_decdr_out(5) AND state_decdr_out (4);
+    JUMP3  <= instruction_decdr_out(5) AND state_decdr_out (5);
+
+    --JMPZ με Z variable
+    --Z=1 -->Yes Jump)
+    JMPZY1 <= instruction_decdr_out(6) AND z AND state_decdr_out (3);
+    JMPZY2 <= instruction_decdr_out(6) AND z AND state_decdr_out (4);
+    JMPZY3 <= instruction_decdr_out(6) AND z AND state_decdr_out (5);
+    --Z=0 -->No Jump)
+    JMPZN1 <= instruction_decdr_out(6) AND (NOT z) AND state_decdr_out (3);
+    JMPZN2 <= instruction_decdr_out(6) AND (NOT z) AND state_decdr_out (4);
+
+    --JPNZ με NOT Z variable
+    --Z=0 -->Yes Jump
+    JPNZY1 <= instruction_decdr_out(7) AND (NOT z) AND state_decdr_out (3);
+    JPNZY2 <= instruction_decdr_out(7) AND (NOT z) AND state_decdr_out (4);
+    JPNZY3 <= instruction_decdr_out(7) AND (NOT z) AND state_decdr_out (5);
+    --Z=1 -->No Jump
+    JPNZN1 <= instruction_decdr_out(7) AND z AND state_decdr_out (3);
+    JPNZN2 <= instruction_decdr_out(7) AND z AND state_decdr_out (4);
+
+    --εντολες απο alu
+    ADD1   <= instruction_decdr_out(8)  AND state_decdr_out (3);
+    SUB1   <= instruction_decdr_out(9)  AND state_decdr_out (3);
+    INAC1  <= instruction_decdr_out(10) AND state_decdr_out (3);
+    CLAC1  <= instruction_decdr_out(11) AND state_decdr_out (3);
+    AND1   <= instruction_decdr_out(12) AND state_decdr_out (3);
+    OR1    <= instruction_decdr_out(13) AND state_decdr_out (3);
+    XOR1   <= instruction_decdr_out(14) AND state_decdr_out (3);
+    NOT1   <= instruction_decdr_out(15) AND state_decdr_out (3);
+
+
+    
+    --ενωνουμε ολα τα final states με OR, μη σπαταλη χρονου και οδηγηση σε Τ0/FETCH για να παρουμε την επομενη 
+    clear_cntr_out <= NOP1 OR LDAC5 OR STAC5 OR MVAC1 OR MOVR1 OR JUMP3 OR
+                     JMPZY3 OR JMPZN2 OR JPNZY3 OR JPNZN2 OR
+                     ADD1 OR SUB1 OR INAC1 OR CLAC1 OR
+                     AND1 OR OR1 OR XOR1 OR NOT1;
+
+
+    
+	--σηματα απο Πινακα 2-μεσω OR
+    ARLOAD <= FETCH1 OR FETCH3 OR LDAC3 OR STAC3;
+    PCLOAD <= JUMP3 OR JMPZY3 OR JPNZY3;
+    DRLOAD <= FETCH2 OR LDAC1 OR LDAC2 OR LDAC4 OR STAC1 OR STAC2 OR STAC4 OR 
+                  JUMP1 OR JUMP2 OR JMPZY1 OR JMPZY2 OR JPNZY1 OR JPNZY2;		  
+    IRLOAD <= FETCH3;
+    TRLOAD <= LDAC2 OR STAC2 OR JUMP2 OR JMPZY2 OR JPNZY2;
+    RLOAD  <= MVAC1;
+    ACLOAD <= LDAC5 OR MOVR1 OR ADD1 OR SUB1 OR INAC1 OR CLAC1 OR 
+                  AND1 OR OR1 OR XOR1 OR NOT1;            
+    ZLOAD  <= LDAC5 OR MOVR1 OR ADD1 OR SUB1 OR INAC1 OR CLAC1 OR 
+                  AND1 OR OR1 OR XOR1 OR NOT1;             
+    ARINC  <= LDAC1 OR STAC1 OR JMPZY1 OR JPNZY1;
+    PCINC  <= FETCH2 OR LDAC1 OR LDAC2 OR STAC1 OR STAC2 OR 
+                  JMPZN1 OR JMPZN2 OR JPNZN1 OR JPNZN2;            
+    sig_READ   <= FETCH2 OR LDAC1 OR LDAC2 OR LDAC4 OR STAC1 OR STAC2 OR 
+                  JUMP1 OR JUMP2 OR JMPZY1 OR JMPZY2 OR JPNZY1 OR JPNZY2;             
+    sig_WRITE  <= STAC5;
+    PCBUS  <= FETCH1 OR FETCH3;
+    DRBUS  <= LDAC2 OR LDAC3 OR LDAC5 OR STAC2 OR STAC3 OR STAC5 OR 
+                  JUMP2 OR JUMP3 OR JMPZY2 OR JMPZY3 OR JPNZY2 OR JPNZY3;            
+    TRBUS  <= LDAC3 OR STAC3 OR JUMP3 OR JMPZY3 OR JPNZY3;
+    RBUS   <= MOVR1 OR ADD1 OR SUB1 OR AND1 OR OR1 OR XOR1;
+    ACBUS  <= STAC4 OR MVAC1;
+    MEMBUS <= FETCH2 OR LDAC1 OR LDAC2 OR LDAC4 OR STAC1 OR STAC2 OR 
+                  JUMP1 OR JUMP2 OR JMPZY1 OR JMPZY2 OR JPNZY1 OR JPNZY2;           
+    BUSMEM <= STAC5;
+    ANDOP  <= AND1;
+    OROP   <= OR1;
+    XOROP  <= XOR1;
+    NOTOP  <= NOT1;
+    ACINC  <= INAC1;
+    ACZERO <= CLAC1;
+    PLUS   <= ADD1;
+    MINUS  <= SUB1;
+
+--συνδεδη σηματων με mOPs, απο 0-26 bits
+    mOPs(0)  <= ARLOAD;
+    mOPs(1)  <= PCLOAD;
+    mOPs(2)  <= DRLOAD;
+    mOPs(3)  <= IRLOAD;
+    mOPs(4)  <= TRLOAD;
+    mOPs(5)  <= RLOAD;
+    mOPs(6)  <= ACLOAD;
+    mOPs(7)  <= ZLOAD;
+    mOPs(8)  <= ARINC;
+    mOPs(9)  <= PCINC;
+    mOPs(10) <= sig_READ;
+    mOPs(11) <= sig_WRITE;
+    mOPs(12) <= PCBUS;
+    mOPs(13) <= DRBUS;
+    mOPs(14) <= TRBUS;
+    mOPs(15) <= RBUS;
+    mOPs(16) <= ACBUS;
+    mOPs(17) <= MEMBUS;
+    mOPs(18) <= BUSMEM;
+    mOPs(19) <= ANDOP;
+    mOPs(20) <= OROP;
+    mOPs(21) <= XOROP;
+    mOPs(22) <= NOTOP;
+    mOPs(23) <= ACINC;
+    mOPs(24) <= ACZERO;
+    mOPs(25) <= PLUS;
+    mOPs(26) <= MINUS;
+
+END arc;
