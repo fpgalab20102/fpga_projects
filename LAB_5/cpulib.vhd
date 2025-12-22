@@ -1,0 +1,100 @@
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+
+PACKAGE cpulib IS
+
+    -- 1. Κύκλωμα παραγωγής σημάτων ALU
+    COMPONENT alus
+        PORT (
+            rbus, acload, zload, andop    : IN  std_logic;
+            orop, notop, xorop, aczero    : IN  std_logic;
+            acinc, plus, minus, drbus     : IN  std_logic;
+            alus                          : OUT std_logic_vector(6 downto 0)
+        );
+    END COMPONENT;
+
+    -- 2. Δίαυλος Δεδομένων (data_bus)
+    COMPONENT data_bus
+        PORT (
+            -- Inputs (Από τις εξόδους των Registers)
+            pc_out  : IN  STD_LOGIC_VECTOR(15 DOWNTO 0);
+            dr_out  : IN  STD_LOGIC_VECTOR(7 DOWNTO 0);
+            tr_out  : IN  STD_LOGIC_VECTOR(7 DOWNTO 0);
+            r_out   : IN  STD_LOGIC_VECTOR(7 DOWNTO 0);
+            ac_out  : IN  STD_LOGIC_VECTOR(7 DOWNTO 0);
+            mem_out : IN  STD_LOGIC_VECTOR(7 DOWNTO 0);
+            
+            -- Control Signals (Enables)
+            pcbus   : IN  STD_LOGIC;
+            drbus   : IN  STD_LOGIC;
+            trbus   : IN  STD_LOGIC;
+            rbus    : IN  STD_LOGIC;
+            acbus   : IN  STD_LOGIC;
+            membus  : IN  STD_LOGIC;
+            busmem  : IN  STD_LOGIC; 
+            
+            -- Outputs
+            dbus        : OUT STD_LOGIC_VECTOR(15 DOWNTO 0);
+            mem_data_in : OUT STD_LOGIC_VECTOR(7 DOWNTO 0)
+        );
+    END COMPONENT;
+
+    -- 3. Εξωτερική Μνήμη (RAM)
+    COMPONENT RAM
+        PORT (
+            address : IN  STD_LOGIC_VECTOR (7 DOWNTO 0);
+            clock   : IN  STD_LOGIC;
+            data    : IN  STD_LOGIC_VECTOR (7 DOWNTO 0);
+            wren    : IN  STD_LOGIC;
+            q       : OUT STD_LOGIC_VECTOR (7 DOWNTO 0)
+        );
+    END COMPONENT;
+
+    -- 4. Γενικός Καταχωρητής (regnbit)
+    COMPONENT regnbit
+        GENERIC (n : INTEGER := 8); 
+        PORT (
+            din  : IN  std_logic_vector(n-1 downto 0);
+            clk  : IN  std_logic;
+            rst  : IN  std_logic;
+            ld   : IN  std_logic;
+            inc  : IN  std_logic;
+            dout : OUT std_logic_vector(n-1 downto 0)
+        );
+    END COMPONENT;
+
+    -- 5. ALU (Structural)
+    COMPONENT alu
+        GENERIC (n : INTEGER := 8);
+        PORT (
+            ac    : IN  std_logic_vector(n-1 downto 0);
+            db    : IN  std_logic_vector(n-1 downto 0);
+            alus  : IN  std_logic_vector(7 downto 1); 
+            dout  : OUT std_logic_vector(n-1 downto 0);
+            z_out : OUT std_logic 
+        );
+    END COMPONENT;
+
+    -- 6. Microprogrammed Control Unit (mseq)
+    COMPONENT mseq
+        PORT (
+            ir        : IN  std_logic_vector(3 downto 0);
+            clock     : IN  std_logic;
+            reset     : IN  std_logic;
+            z         : IN  std_logic;
+            code      : OUT std_logic_vector(35 downto 0); -- Debug (ROM out)
+            debug_reg : OUT std_logic_vector(5 downto 0);  -- Debug (CAR)
+            mOPs      : OUT std_logic_vector(26 downto 0)
+        );
+    END COMPONENT;
+
+    -- 7. Microcode ROM (mseq_rom)
+    COMPONENT mseq_rom
+        PORT (
+            address : IN STD_LOGIC_VECTOR (5 DOWNTO 0);
+            clock   : IN STD_LOGIC := '1';
+            q       : OUT STD_LOGIC_VECTOR (35 DOWNTO 0)
+        );
+    END COMPONENT;
+
+END cpulib;

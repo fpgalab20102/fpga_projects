@@ -1,0 +1,180 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_unsigned.all;
+use work.cpulib.all; -- Περιέχει τα components: regnbit, alu, alus, data_bus, hardwired, extRAM
+
+entity rs_cpu is
+port(
+    ARdata, PCdata : buffer std_logic_vector(15 downto 0); -- 16-bit Registers
+    DRdata, ACdata : buffer std_logic_vector(7 downto 0);  -- 8-bit Registers
+    IRdata, TRdata : buffer std_logic_vector(7 downto 0);
+    RRdata         : buffer std_logic_vector(7 downto 0);  -- Register R
+    ZRdata         : buffer std_logic;                     -- Zero Flag
+    clock, reset   : in std_logic;
+    mOP            : buffer std_logic_vector(26 downto 0); -- Control Signals
+    addressBus     : buffer std_logic_vector(15 downto 0); -- External Address Bus View
+    dataBus        : buffer std_logic_vector(7 downto 0)   -- External Data Bus View
+);
+end rs_cpu;
+
+architecture arc of rs_cpu is
+
+    -- Εσωτερικά σήματα για συνδέσεις που δεν είναι θύρες (ports)
+    signal internal_bus : std_logic_vector(15 downto 0); -- Ο κεντρικός δίαυλος 16-bit
+    
+    -- Σήματα για τη Μνήμη
+    signal ram_q_out       : std_logic_vector(7 downto 0); -- Δεδομένα από RAM -> Bus
+    signal mem_data_to_ram : std_logic_vector(7 downto 0); -- Δεδομένα από Bus -> RAM
+    
+    -- Σήματα για την ALU
+    signal alu_result : std_logic_vector(7 downto 0); -- Αποτέλεσμα πράξης -> AC
+    signal alu_z_flag : std_logic;                    -- Zero Flag -> Z Register
+    signal alus_ctrl  : std_logic_vector(6 downto 0); -- Κωδικός ελέγχου ALU (από alus unit)
+
+begin
+
+    -- ==========================================================
+    -- 1. HARDWIRED CONTROL UNIT
+    -- ==========================================================
+    -- Παράγει το διάνυσμα mOP (27 bits) με βάση την εντολή (IR) και το χρόνο
+    CONTROL_UNIT: hardwired
+        PORT MAP (
+            ir    => IRdata(7 downto 4), -- Τα 4 MSB του IR είναι το Opcode
+            clock => clock,
+            reset => reset,
+            z     => ZRdata,             -- Η τρέχουσα τιμή της σημαίας Z
+            mOPs  => mOP                 -- Έξοδος όλων των σημάτων ελέγχου
+        );
+
+    -- ==========================================================
+    -- 2. ALU CONTROL LOGIC (alus)
+    -- ==========================================================
+    -- Μετατρέπει τα flags του mOP σε σήματα επιλογής για την ALU
+    ALU_CONTROLLER: alus
+        PORT MAP (
+            -- Αντιστοίχιση των bits του mOP με βάση τον πίνακα της άσκησης:
+            -- 19:AND, 20:OR, 22:NOT, 21:XOR, 24:ACZERO, 23:ACINC, 25:PLUS, 26:MINUS
+            andop  => mOP(19),
+            orop   => mOP(20),
+            notop  => mOP(22),
+            xorop  => mOP(21),
+            aczero => mOP(24),
+            acinc  => mOP(23),
+            plus   => mOP(25),
+            minus  => mOP(26),
+            
+            -- Σήματα που επηρεάζουν τη λειτουργία της ALU
+            rbus   => mOP(15), 
+            acload => mOP(6), 
+            zload  => mOP(7), 
+            drbus  => mOP(13),
+            
+            -- Έξοδος 7-bits προς την ALU
+            alus   => alus_ctrl 
+        );
+
+    -- ==========================================================
+    -- 3. ΚΕΝΤΡΙΚΟΣ ΔΙΑΥΛΟΣ (Data Bus)
+    -- ==========================================================
+    BUS_SYSTEM: data_bus
+        PORT MAP (
+            -- Είσοδοι δεδομένων (από τα buffers/outputs των καταχωρητών)
+            pc_out  => PCdata,
+            dr_out  => DRdata,
+            tr_out  => TRdata,
+            r_out   => RRdata,
+            ac_out  => ACdata,
+            mem_out => ram_q_out, -- Από την έξοδο της RAM
+            
+            -- Σήματα Ενεργοποίησης (Enable) από το mOP
+            pcbus   => mOP(12),
+            drbus   => mOP(13),
+            trbus   => mOP(14),
+            rbus    => mOP(15),
+            acbus   => mOP(16),
+            membus  => mOP(17), -- Read from Memory
+            busmem  => mOP(18), -- Write to Memory (Buffer Enable)
+            
+            -- Έξοδοι
+            dbus        => internal_bus,   -- Ο κοινός δίαυλος 16-bit
+            mem_data_in => mem_data_to_ram -- Τα δεδομένα που πάνε προς τη μνήμη
+        );
+
+    -- ==========================================================
+    -- 4. ΚΑΤΑΧΩΡΗΤΕΣ (Registers)
+    -- ==========================================================
+    
+    -- PC (16-bit, Load @ mOP(1), Inc @ mOP(9))
+    REG_PC: regnbit GENERIC MAP (n => 16)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(1), inc => mOP(9), 
+                  din => internal_bus, dout => PCdata);
+
+    -- AR (16-bit, Load @ mOP(0), Inc @ mOP(8))
+    REG_AR: regnbit GENERIC MAP (n => 16)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(0), inc => mOP(8), 
+                  din => internal_bus, dout => ARdata);
+
+    -- DR (8-bit, Load @ mOP(2)) - Μόνο τα χαμηλά 8 bits του διαύλου
+    REG_DR: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(2), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => DRdata);
+
+    -- IR (8-bit, Load @ mOP(3))
+    REG_IR: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(3), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => IRdata);
+
+    -- TR (8-bit, Load @ mOP(4))
+    REG_TR: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(4), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => TRdata);
+
+    -- R / RR (8-bit, Load @ mOP(5))
+    REG_R: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(5), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => RRdata);
+
+    -- AC (8-bit, Load @ mOP(6)) - ΠΡΟΣΟΧΗ: Παίρνει είσοδο από ALU Result
+    REG_AC: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(6), inc => '0', 
+                  din => alu_result, dout => ACdata);
+
+    -- Z Flag (1-bit, Load @ mOP(7)) - Παίρνει είσοδο από ALU Z-Flag
+    REG_Z: regnbit GENERIC MAP (n => 1)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(7), inc => '0', 
+                  din(0) => alu_z_flag, dout(0) => ZRdata);
+
+    -- ==========================================================
+    -- 5. ALU & MEMORY
+    -- ==========================================================
+
+    -- ALU Unit
+    ALU_UNIT: alu GENERIC MAP (n => 8)
+        PORT MAP (
+            ac    => ACdata,                 -- 1ος τελεστής (AC)
+            db    => internal_bus(7 downto 0), -- 2ος τελεστής (από Bus/DR)
+            alus  => alus_ctrl,              -- Κωδικός Πράξης
+            dout  => alu_result,             -- Αποτέλεσμα -> πάει στο AC
+            z_out => alu_z_flag              -- Zero Flag -> πάει στο Z
+        );
+
+    -- External Memory (RAM)
+    MEMORY_UNIT: extRAM
+        PORT MAP (
+            clock   => clock,
+            address => ARdata(7 downto 0),   -- Διεύθυνση από AR (8 LSBs)
+            data    => mem_data_to_ram,      -- Δεδομένα Εισόδου (από Bus)
+            wren    => mOP(11),              -- Write Enable (WRITE signal)
+            q       => ram_q_out             -- Δεδομένα Εξόδου (προς Bus)
+        );
+
+    -- ==========================================================
+    -- 6. ΕΞΩΤΕΡΙΚΕΣ ΣΥΝΔΕΣΕΙΣ (Οδήγηση Buffers Εξόδου)
+    -- ==========================================================
+    -- Ο Δίαυλος Διευθύνσεων είναι το περιεχόμενο του AR
+    addressBus <= ARdata;
+    
+    -- Ο Δίαυλος Δεδομένων (εξωτερική όψη) δείχνει τι υπάρχει στο Bus αυτή τη στιγμή (τα 8 LSBs)
+    dataBus    <= internal_bus(7 downto 0);
+
+end arc;
