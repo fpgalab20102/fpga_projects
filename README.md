@@ -5,3 +5,4 @@
              3) LAB_3
              4) LAB_4
              5) LAB_5
+             6) Project_3
