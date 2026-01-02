@@ -1,0 +1,93 @@
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+
+ENTITY testbench IS
+END testbench;
+
+ARCHITECTURE bhv OF testbench IS 
+
+    COMPONENT rs_cpu
+    PORT(
+         ARdata : BUFFER  std_logic_vector(15 downto 0);
+         PCdata : BUFFER  std_logic_vector(15 downto 0);
+         DRdata : BUFFER  std_logic_vector(7 downto 0);
+         ACdata : BUFFER  std_logic_vector(7 downto 0);
+         IRdata : BUFFER  std_logic_vector(7 downto 0);
+         TRdata : BUFFER  std_logic_vector(7 downto 0);
+         RRdata : BUFFER  std_logic_vector(7 downto 0);
+         Bdata  : BUFFER  std_logic_vector(7 downto 0);
+         ZRdata : BUFFER  std_logic;
+         clock  : IN  std_logic;
+         reset  : IN  std_logic;
+         mOP    : BUFFER  std_logic_vector(28 downto 0);
+         addressBus : BUFFER  std_logic_vector(15 downto 0);
+         dataBus    : BUFFER  std_logic_vector(7 downto 0)
+        );
+    END COMPONENT;
+    
+    -- Inputs
+    signal clock : std_logic := '0';
+    signal reset : std_logic := '0';
+
+    -- Outputs
+    signal ARdata : std_logic_vector(15 downto 0);
+    signal PCdata : std_logic_vector(15 downto 0);
+    signal DRdata : std_logic_vector(7 downto 0);
+    signal ACdata : std_logic_vector(7 downto 0);
+    signal IRdata : std_logic_vector(7 downto 0);
+    signal TRdata : std_logic_vector(7 downto 0);
+    signal RRdata : std_logic_vector(7 downto 0);
+    signal Bdata  : std_logic_vector(7 downto 0);
+    signal ZRdata : std_logic;
+    signal mOP    : std_logic_vector(28 downto 0);
+    signal addressBus : std_logic_vector(15 downto 0);
+    signal dataBus    : std_logic_vector(7 downto 0);
+
+    -- Clock period definitions
+    constant clock_period : time := 20 ns;
+ 
+BEGIN
+ 
+    -- Instantiate the Unit Under Test (UUT)
+    uut: rs_cpu PORT MAP (
+          ARdata => ARdata,
+          PCdata => PCdata,
+          DRdata => DRdata,
+          ACdata => ACdata,
+          IRdata => IRdata,
+          TRdata => TRdata,
+          RRdata => RRdata,
+          Bdata  => Bdata,
+          ZRdata => ZRdata,
+          clock  => clock,
+          reset  => reset,
+          mOP    => mOP,
+          addressBus => addressBus,
+          dataBus    => dataBus
+        );
+
+    -- Clock process
+    clock_process :process
+    begin
+        clock <= '0';
+        wait for clock_period/2;
+        clock <= '1';
+        wait for clock_period/2;
+    end process;
+ 
+
+    -- Stimulus process
+    stim_proc: process
+    begin		
+        -- Reset για 2 κύκλους
+        reset <= '1';
+        wait for 40 ns;	
+        
+        -- Απενεργοποίηση Reset
+        reset <= '0';
+        
+        
+        wait;
+    end process;
+
+END bhv;

@@ -1,0 +1,114 @@
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+
+ENTITY hardwired is
+    PORT (
+        ir    : IN  STD_LOGIC_VECTOR(7 DOWNTO 0); -- Είσοδος: Ο κωδικός εντολής (Opcode) από τον IR
+        clock : IN  STD_LOGIC;                    
+        reset : IN  STD_LOGIC;                    -- Ασύγχρονο Reset
+        z     : IN  STD_LOGIC;                    -- Flag μηδενικού αποτελέσματος (Zero Flag)
+        mOPs  : OUT STD_LOGIC_VECTOR(28 DOWNTO 0) -- Έξοδος: Διάνυσμα ελέγχου (Control Signals) για όλο το Data Path
+    );
+END hardwired;
+
+ARCHITECTURE bhv OF hardwired IS
+    -- Ορισμός των καταστάσεων της Μηχανής Πεπερασμένων Καταστάσεων (FSM).
+    -- S_FETCH1-3: Κύκλοι ανάκλησης εντολής.
+    -- S_EXECUTE: Κύκλος εκτέλεσης.
+    -- S_SKIP_OPERAND: Νέα κατάσταση για τη διαχείριση δίμπαιτων εντολών.
+    TYPE state_type IS (S_RESET, S_FETCH1, S_FETCH2, S_FETCH3, S_EXECUTE, S_SKIP_OPERAND);
+    SIGNAL current_state, next_state : state_type;
+BEGIN
+
+    -- Sequential Logic
+    -- Υπεύθυνη για τη μετάβαση στην επόμενη κατάσταση με βάση το ρολόι.
+    PROCESS (clock, reset)
+    BEGIN
+        IF reset = '1' THEN 
+            current_state <= S_RESET; -- Σε περίπτωση Reset, πάμε στην αρχική κατάσταση
+        ELSIF rising_edge(clock) THEN 
+            current_state <= next_state; -- Στην ακμή του ρολογιού, ενημερώνεται η κατάσταση
+        END IF;
+    END PROCESS;
+
+    -- Combinational Logic
+    -- Εδώ καθορίζονται τα σήματα εξόδου (mOPs) και η επόμενη κατάσταση.
+    PROCESS (current_state, ir, z)
+    BEGIN
+        -- Default τιμές για αποφυγή δημιουργίας Latches.
+        -- Μηδενίζουμε όλα τα σήματα ελέγχου στην αρχή κάθε κύκλου.
+        mOPs <= (others => '0'); 
+        next_state <= S_FETCH1; -- Default επόμενη κατάσταση είναι η Fetch
+
+        CASE current_state IS
+            -- Κατάσταση Reset: Απλή μετάβαση στην αρχή
+            WHEN S_RESET => 
+                next_state <= S_FETCH1;
+
+            -- === FETCH CYCLE (Κύκλος Ανάκλησης) ===
+            
+            -- T0: Μεταφορά διεύθυνσης από PC -> AR
+            WHEN S_FETCH1 => 
+                mOPs(12) <= '1'; -- PCBUS: Ο PC βγάζει τη διεύθυνση στον δίαυλο
+                mOPs(0)  <= '1'; -- ARLOAD: Ο AR φορτώνει τη διεύθυνση
+                next_state <= S_FETCH2;
+
+            -- T1: Ανάγνωση Μνήμης -> DR και αύξηση PC
+            WHEN S_FETCH2 => 
+                mOPs(17) <= '1'; -- MEMBUS: Η μνήμη βγάζει δεδομένα στον δίαυλο
+                mOPs(2)  <= '1'; -- DRLOAD: Ο DR αποθηκεύει την εντολή
+                mOPs(9)  <= '1'; -- PCINC: Αυξάνουμε τον PC για να δείχνει στην επόμενη θέση
+                next_state <= S_FETCH3;
+
+            -- T2: Μεταφορά Εντολής DR -> IR
+            -- Σημαντικό: Εδώ έχουμε πλέον τον Opcode στον IR για να αποφασίσουμε μετά.
+            WHEN S_FETCH3 => 
+                mOPs(13) <= '1'; -- DRBUS: Ο DR βγάζει την εντολή στον δίαυλο
+                mOPs(3)  <= '1'; -- IRLOAD: Ο IR αποθηκεύει την εντολή
+                next_state <= S_EXECUTE; -- Πάμε για εκτέλεση
+
+            -- === EXECUTE CYCLE (Κύκλος Εκτέλεσης - T3) ===
+            WHEN S_EXECUTE =>
+                next_state <= S_FETCH1; -- Μετά την εκτέλεση, επιστρέφουμε στο Fetch (εκτός αν αλλάξει παρακάτω)
+
+                -- Αποκωδικοποίηση της εντολής (Opcode Decoding)
+                CASE ir IS
+                    -- Διαχείριση Δίμπαιτων Εντολών (LDAC/STAC)
+                    -- Επειδή ακολουθεί αριθμός (operand), πρέπει να τον προσπεράσουμε
+                    WHEN x"10" | x"20" => 
+                         next_state <= S_SKIP_OPERAND;
+
+                    -- Λειτουργία: AC = AC OR B(opcode 1D)
+                    WHEN x"1D" =>
+                        mOPs(27) <= '1'; -- BBUS: Ενεργοποιούμε τον Tri-state buffer του B (δημιουργήθηκε νέο σήμα)
+                        mOPs(20) <= '1'; -- OROP: Εντολή στην ALU για λογική πράξη OR
+                        mOPs(6)  <= '1'; -- ACLOAD: Αποθήκευση του αποτελέσματος στον AC
+                        mOPs(7)  <= '1'; -- ZLOAD: Ενημέρωση του Zero Flag
+
+                    -- Λειτουργία: AC = AC XOR B(opcode 1E)
+                    WHEN x"1E" =>
+                        mOPs(27) <= '1'; -- BBUS: Ο B βγαίνει στον δίαυλο (RBUS=0)
+                        mOPs(21) <= '1'; -- XOROP: Εντολή στην ALU για λογική πράξη XOR
+                        mOPs(6)  <= '1'; -- ACLOAD: Αποθήκευση στον AC
+                        mOPs(7)  <= '1'; -- ZLOAD: Ενημέρωση Z Flag
+                        
+                    -- INAC (Opcode A0) - Χρησιμοποιείται για έλεγχο (AC++)
+                    WHEN x"A0" =>
+                        mOPs(23) <= '1'; -- ACINC: Αύξηση του AC κατά 1
+                        mOPs(6)  <= '1'; -- ACLOAD
+                        mOPs(7)  <= '1'; -- ZLOAD
+
+                    WHEN OTHERS => NULL; -- Για άλλες εντολές δεν κάνουμε τίποτα (NOP)
+                END CASE;
+
+            -- Κατάσταση SKIP: Αυξάνει τον PC κατά 1 ακόμα φορά.
+            -- Αυτό χρειάζεται στις εντολές που πιάνουν 2 θέσεις μνήμης (Εντολή + Δεδομένο),
+            -- ώστε ο PC να δείχνει στην επόμενη πραγματική εντολή και όχι στο δεδομένο.
+            WHEN S_SKIP_OPERAND =>
+                mOPs(9) <= '1'; -- PCINC
+                next_state <= S_FETCH1;
+
+        END CASE;
+    END PROCESS;
+
+END behavioral;

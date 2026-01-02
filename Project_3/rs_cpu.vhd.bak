@@ -1,0 +1,183 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_unsigned.all;
+use work.cpulib.all; -- Βεβαιώσου ότι το cpulib έχει ενημερωθεί όπως είπαμε πριν
+
+entity rs_cpu is
+port(
+    ARdata, PCdata : buffer std_logic_vector(15 downto 0); 
+    DRdata, ACdata : buffer std_logic_vector(7 downto 0);  
+    IRdata, TRdata : buffer std_logic_vector(7 downto 0);
+    RRdata         : buffer std_logic_vector(7 downto 0);  
+    
+    -- ΝΕΟ: Buffer για τον Καταχωρητή B
+    Bdata          : buffer std_logic_vector(7 downto 0);
+
+    ZRdata         : buffer std_logic;                     
+    
+    clock, reset   : in std_logic;
+    
+    -- ΝΕΟ: Αυξημένο εύρος για να χωρέσουν τα BBUS(27) και BLOAD(28)
+    mOP            : buffer std_logic_vector(28 downto 0); 
+    
+    addressBus     : buffer std_logic_vector(15 downto 0); 
+    dataBus        : buffer std_logic_vector(7 downto 0)   
+);
+end rs_cpu;
+
+architecture arc of rs_cpu is
+
+    signal internal_bus : std_logic_vector(15 downto 0); 
+    signal ram_q_out        : std_logic_vector(7 downto 0); 
+    signal mem_data_to_ram : std_logic_vector(7 downto 0); 
+    signal alu_result : std_logic_vector(7 downto 0); 
+    signal alu_z_flag : std_logic;                    
+    signal alus_ctrl  : std_logic_vector(6 downto 0); 
+
+begin
+
+    -- 1. CONTROL UNIT (HARDWIRED για Εργασία 3)
+    -- Αντικαταστήσαμε το mseq με το hardwired
+    CONTROL_UNIT: hardwired
+        PORT MAP (
+            ir        => IRdata, -- ΠΡΟΣΟΧΗ: Όλα τα 8 bits (όχι 3 downto 0) για να δει το 1D/1E
+            clock     => clock,
+            reset     => reset,
+            z         => ZRdata,
+            mOPs      => mOP     -- 29-bit διάνυσμα
+        );
+
+    -- 2. ALU CONTROL
+    -- Οι αντιστοιχίσεις εδώ βασίζονται στο hardwired.vhd που φτιάξαμε
+    ALU_CONTROLLER: alus
+        PORT MAP (
+            -- Logical Operations
+            andop  => mOP(19), 
+            orop   => mOP(20),
+            xorop  => mOP(21),
+            notop  => mOP(22),
+            
+            -- Arithmetic Operations
+            acinc  => mOP(23),
+            aczero => mOP(24), 
+            plus   => mOP(25), 
+            minus  => mOP(26),
+            
+            -- Control Signals που επηρεάζουν την ALU
+            rbus   => mOP(15), 
+            acload => mOP(6), 
+            zload  => mOP(7), 
+            drbus  => mOP(13),
+            
+            -- Σημείωση: Το BBUS (27) πάει στο Bus System, η ALU παίρνει ό,τι υπάρχει στο bus
+            
+            alus   => alus_ctrl 
+        );
+
+    -- 3. BUS SYSTEM
+    BUS_SYSTEM: data_bus
+        PORT MAP (
+            pc_out_16 => PCdata, -- Προσοχή στο όνομα (pc_out_16 ή pc_out ανάλογα το data_bus σου)
+            dr_out    => DRdata,
+            tr_out    => TRdata, 
+            r_out     => RRdata,
+            ac_out    => ACdata, 
+            mem_out   => ram_q_out,
+            
+            b_out     => Bdata,   -- ΝΕΟ: Σύνδεση εξόδου B
+            
+            pcbus     => mOP(12), 
+            drbus     => mOP(13),
+            trbus     => mOP(14), 
+            rbus      => mOP(15),
+            acbus     => mOP(16), 
+            membus    => mOP(17), 
+            busmem    => mOP(18), 
+            
+            bbus      => mOP(27), -- ΝΕΟ: Σήμα BBUS (Bit 27)
+            
+            dbus            => internal_bus,   
+            mem_data_in     => mem_data_to_ram 
+        );
+
+    -- 4. REGISTERS
+    
+    -- PC: PCLOAD(1), PCINC(9) -> Βάσει του hardwired mapping που φτιάξαμε
+    REG_PC: regnbit GENERIC MAP (n => 16)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(1), inc => mOP(9), 
+                  din => internal_bus, dout => PCdata);
+
+    -- AR: ARLOAD(0), ARINC(8)
+    REG_AR: regnbit GENERIC MAP (n => 16)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(0), inc => mOP(8), 
+                  din => internal_bus, dout => ARdata);
+
+    -- DR: DRLOAD(2)
+    REG_DR: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(2), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => DRdata);
+
+    -- IR: IRLOAD(3)
+    REG_IR: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(3), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => IRdata);
+
+    -- TR: TRLOAD(4)
+    REG_TR: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(4), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => TRdata);
+
+    -- R: RLOAD(5)
+    REG_R: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(5), inc => '0', 
+                  din => internal_bus(7 downto 0), dout => RRdata);
+
+    -- AC: ACLOAD(6)
+    REG_AC: regnbit GENERIC MAP (n => 8)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(6), inc => '0', 
+                  din => alu_result, dout => ACdata);
+
+    -- Z: ZLOAD(7)
+    REG_Z: regnbit GENERIC MAP (n => 1)
+        PORT MAP (clk => clock, rst => reset, ld => mOP(7), inc => '0', 
+                  din(0) => alu_z_flag, dout(0) => ZRdata);
+
+    -- ΝΕΟΣ REG B: BLOAD(28)
+    -- Χρησιμοποιούμε το bit 28 για φόρτωση (αν και η άσκηση δεν έχει εντολή load, το βάζουμε για πληρότητα)
+    REG_B: regnbit GENERIC MAP (n => 8)
+        PORT MAP (
+            clk => clock, rst => reset, 
+            ld  => mOP(28), inc => '0', 
+            din => internal_bus(7 downto 0), 
+            dout => Bdata
+        );
+
+    -- 5. MEMORY
+    -- WRITE signal is mOP(11) βάσει του hardwired μας (ή 15 στο παλιό microcode - εδώ ακολουθούμε το hardwired)
+    -- Στο hardwired που έστειλα πριν: sig_WRITE <= STAC5 -> mOPs(11).
+    -- Στο data_bus mapping: busmem -> mOP(18).
+    -- ΠΡΟΣΟΧΗ: Ελέγξτε το hardwired.vhd mapping. 
+    -- Στον κώδικα hardwired που σου έδωσα: mOPs(11) <= sig_WRITE.
+    MEMORY_UNIT: RAM 
+        PORT MAP (
+            clock   => clock,
+            address => ARdata(7 downto 0),   
+            data    => mem_data_to_ram,      
+            wren    => mOP(11), -- WRITE SIGNAL
+            q       => ram_q_out             
+        );
+        
+    ALU_UNIT: alu GENERIC MAP (n => 8)
+        PORT MAP (
+            ac    => ACdata,                 
+            db    => internal_bus(7 downto 0), 
+            alus  => alus_ctrl,              
+            dout  => alu_result,             
+            z_out => alu_z_flag              
+        );
+
+    -- 6. OUTPUTS
+    addressBus <= ARdata;
+    dataBus    <= internal_bus(7 downto 0);
+
+end arc;
